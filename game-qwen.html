@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Тетрис</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background-color: #f0f0f0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .game-container {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+    #game-board {
+      width: 300px;
+      height: 600px;
+      border: 2px solid #333;
+      background-color: #111;
+      display: grid;
+      grid-template-rows: repeat(20, 1fr);
+      grid-template-columns: repeat(10, 1fr);
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+    }
+    .cell {
+      border: 1px solid #333;
+      box-sizing: border-box;
+    }
+    .filled {
+      background-color: #333;
+      border: 1px solid #555;
+    }
+    .i { background-color: cyan; }
+    .o { background-color: yellow; }
+    .t { background-color: purple; }
+    .s { background-color: green; }
+    .z { background-color: red; }
+    .j { background-color: blue; }
+    .l { background-color: orange; }
+
+    .sidebar {
+      width: 150px;
+      padding: 10px;
+      background-color: #ddd;
+      border: 1px solid #aaa;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+    }
+    .score {
+      font-size: 1.4em;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .next-piece {
+      margin-top: 20px;
+    }
+    .next-grid {
+      width: 100px;
+      height: 100px;
+      margin: 10px auto;
+      display: grid;
+      grid-template-rows: repeat(4, 1fr);
+      grid-template-columns: repeat(4, 1fr);
+    }
+    .controls {
+      margin-top: 20px;
+      font-size: 0.9em;
+      color: #444;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <div id="game-board"></div>
+    <div class="sidebar">
+      <div class="score">
+        <p>Очки: <span id="score">0</span></p>
+      </div>
+      <div class="next-piece">
+        <p>Следующая:</p>
+        <div class="next-grid" id="next-grid"></div>
+      </div>
+      <div class="controls">
+        <p>Управление:</p>
+        <p>← → — движение</p>
+        <p>↑ — поворот</p>
+        <p>↓ — ускорение</p>
+        <p>Пробел — жёсткое падение</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Размеры поля
+    const ROWS = 20;
+    const COLS = 10;
+    const NEXT_SIZE = 4;
+
+    // Игровое поле
+    const board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+    const nextPieceBoard = Array(NEXT_SIZE).fill().map(() => Array(NEXT_SIZE).fill(0));
+
+    // DOM элементы
+    const gameBoardEl = document.getElementById('game-board');
+    const nextGridEl = document.getElementById('next-grid');
+    const scoreEl = document.getElementById('score');
+
+    // Создание сетки
+    function createBoardElement(container, rows, cols) {
+      container.innerHTML = '';
+      const cells = [];
+      for (let r = 0; r < rows; r++) {
+        const row = [];
+        for (let c = 0; c < cols; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          container.appendChild(cell);
+          row.push(cell);
+        }
+        cells.push(row);
+      }
+      return cells;
+    }
+
+    const boardCells = createBoardElement(gameBoardEl, ROWS, COLS);
+    const nextCells = createBoardElement(nextGridEl, NEXT_SIZE, NEXT_SIZE);
+
+    // Все фигуры 4x4 (нормализованы для стабильного поворота)
+    const PIECES = [
+      { // I
+        shape: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+        color: 'i'
+      },
+      { // O
+        shape: [[0,0,0,0],[0,1,1,0],[0,1,1,0],[0,0,0,0]],
+        color: 'o'
+      },
+      { // T
+        shape: [[0,0,0,0],[0,1,0,0],[1,1,1,0],[0,0,0,0]],
+        color: 't'
+      },
+      { // S
+        shape: [[0,0,0,0],[0,1,1,0],[1,1,0,0],[0,0,0,0]],
+        color: 's'
+      },
+      { // Z
+        shape: [[0,0,0,0],[1,1,0,0],[0,1,1,0],[0,0,0,0]],
+        color: 'z'
+      },
+      { // J
+        shape: [[0,0,0,0],[1,0,0,0],[1,1,1,0],[0,0,0,0]],
+        color: 'j'
+      },
+      { // L
+        shape: [[0,0,0,0],[0,0,1,0],[1,1,1,0],[0,0,0,0]],
+        color: 'l'
+      }
+    ];
+
+    // Текущее состояние
+    let currentPiece = null;
+    let nextPiece = null;
+    let currentPosition = { x: 0, y: 0 };
+    let score = 0;
+    let dropInterval = 1000;
+    let lastTime = 0;
+    let gameInterval = null;
+
+    // Случайная фигура
+    function getRandomPiece() {
+      const piece = PIECES[Math.floor(Math.random() * PIECES.length)];
+      return {
+        shape: piece.shape,
+        color: piece.color
+      };
+    }
+
+    // Проверка столкновения
+    function isCollision(piece, pos) {
+      for (let y = 0; y < piece.shape.length; y++) {
+        for (let x = 0; x < piece.shape[y].length; x++) {
+          if (piece.shape[y][x] !== 0) {
+            const newX = pos.x + x;
+            const newY = pos.y + y;
+            if (newX < 0 || newX >= COLS || newY >= ROWS) return true;
+            if (newY >= 0 && board[newY][newX] !== 0) return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // Закрепление фигуры на поле
+    function mergePiece() {
+      for (let y = 0; y < currentPiece.shape.length; y++) {
+        for (let x = 0; x < currentPiece.shape[y].length; x++) {
+          if (currentPiece.shape[y][x] !== 0) {
+            const boardY = currentPosition.y + y;
+            if (boardY >= 0) {
+              board[boardY][currentPosition.x + x] = currentPiece.color;
+            }
+          }
+        }
+      }
+    }
+
+    // Удаление заполненных строк
+    function clearLines() {
+      let linesCleared = 0;
+      for (let y = ROWS - 1; y >= 0; y--) {
+        if (board[y].every(cell => cell !== 0)) {
+          board.splice(y, 1);
+          board.unshift(Array(COLS).fill(0));
+          linesCleared++;
+          y++;
+        }
+      }
+      if (linesCleared > 0) {
+        score += [0, 100, 300, 500, 800][linesCleared] * (Math.floor(score / 1000) + 1);
+        scoreEl.textContent = score;
+        const newInterval = Math.max(100, 1000 - Math.floor(score / 1000) * 100);
+        if (newInterval !== dropInterval) {
+          dropInterval = newInterval;
+          clearInterval(gameInterval);
+          gameInterval = setInterval(gameLoop, dropInterval);
+        }
+      }
+    }
+
+    // Поворот фигуры (безопасный)
+    function rotatePiece(piece) {
+      const m = piece.shape;
+      const N = m.length;
+      return {
+        ...piece,
+        shape: m[0].map((_, i) => m.map(row => row[N - 1 - i]))
+      };
+    }
+
+    // Рендер
+    function render() {
+      // Очистка основного поля
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          boardCells[y][x].className = 'cell';
+          if (board[y][x]) {
+            boardCells[y][x].classList.add(board[y][x], 'filled');
+          }
+        }
+      }
+
+      // Рисуем текущую фигуру
+      if (currentPiece) {
+        for (let y = 0; y < currentPiece.shape.length; y++) {
+          for (let x = 0; x < currentPiece.shape[y].length; x++) {
+            if (currentPiece.shape[y][x] !== 0) {
+              const boardY = currentPosition.y + y;
+              const boardX = currentPosition.x + x;
+              if (boardY >= 0 && boardY < ROWS && boardX >= 0 && boardX < COLS) {
+                boardCells[boardY][boardX].className = 'cell ' + currentPiece.color + ' filled';
+              }
+            }
+          }
+        }
+      }
+
+      // Рисуем следующую фигуру
+      for (let y = 0; y < NEXT_SIZE; y++) {
+        for (let x = 0; x < NEXT_SIZE; x++) {
+          nextCells[y][x].className = 'cell';
+        }
+      }
+      if (nextPiece) {
+        const offset = {
+          x: Math.floor((NEXT_SIZE - nextPiece.shape[0].length) / 2),
+          y: Math.floor((NEXT_SIZE - nextPiece.shape.length) / 2)
+        };
+        for (let y = 0; y < nextPiece.shape.length; y++) {
+          for (let x = 0; x < nextPiece.shape[y].length; x++) {
+            if (nextPiece.shape[y][x] !== 0) {
+              const nextY = offset.y + y;
+              const nextX = offset.x + x;
+              if (nextY >= 0 && nextY < NEXT_SIZE && nextX >= 0 && nextX < NEXT_SIZE) {
+                nextCells[nextY][nextX].className = 'cell ' + nextPiece.color + ' filled';
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Новая фигура
+    function spawnNewPiece() {
+      currentPiece = nextPiece || getRandomPiece();
+      nextPiece = getRandomPiece();
+      const startX = Math.floor((COLS - currentPiece.shape[0].length) / 2);
+      const startY = -2;
+      currentPosition = { x: startX, y: startY };
+
+      if (isCollision(currentPiece, currentPosition)) {
+        gameOver();
+      }
+    }
+
+    // Игровой цикл
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const deltaTime = timestamp - lastTime;
+
+      if (deltaTime > dropInterval) {
+        moveDown();
+        lastTime = timestamp;
+      }
+      render();
+    }
+
+    // Движение
+    function moveDown() {
+      currentPosition.y++;
+      if (isCollision(currentPiece, currentPosition)) {
+        currentPosition.y--;
+        mergePiece();
+        clearLines();
+        spawnNewPiece();
+      }
+    }
+
+    function moveLeft() {
+      currentPosition.x--;
+      if (isCollision(currentPiece, currentPosition)) {
+        currentPosition.x++;
+      }
+    }
+
+    function moveRight() {
+      currentPosition.x++;
+      if (isCollision(currentPiece, currentPosition)) {
+        currentPosition.x--;
+      }
+    }
+
+    function rotate() {
+      const rotated = rotatePiece(currentPiece);
+      if (!isCollision(rotated, currentPosition)) {
+        currentPiece = rotated;
+      }
+    }
+
+    function hardDrop() {
+      while (!isCollision(currentPiece, { x: currentPosition.x, y: currentPosition.y + 1 })) {
+        currentPosition.y++;
+        score += 2;
+      }
+      scoreEl.textContent = score;
+      moveDown();
+    }
+
+    // Обработка клавиш
+    document.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          moveLeft();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          moveRight();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          moveDown();
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          rotate();
+          break;
+        case ' ':
+          e.preventDefault();
+          hardDrop();
+          break;
+      }
+    });
+
+    // Конец игры
+    function gameOver() {
+      clearInterval(gameInterval);
+      alert(`Игра окончена! Ваши очки: ${score}`);
+    }
+
+    // Запуск игры
+    function initGame() {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          board[y][x] = 0;
+        }
+      }
+      score = 0;
+      scoreEl.textContent = '0';
+      dropInterval = 1000;
+      lastTime = 0;
+      nextPiece = null;
+      spawnNewPiece();
+      if (gameInterval) clearInterval(gameInterval);
+      gameInterval = setInterval(gameLoop, dropInterval);
+    }
+
+    window.onload = initGame;
+  </script>
+</body>
+</html>
